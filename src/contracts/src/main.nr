@@ -4,7 +4,8 @@ mod test;
 use dep::aztec::macros::aztec;
 
 #[aztec]
-contract NFT {
+pub contract NFT {
+    use crate::types::listing_note::ListingNote;
     use crate::types::nft_note::NFTNote;
     use dep::authwit::auth::{
         assert_current_call_valid_authwit, assert_current_call_valid_authwit_public,
@@ -28,6 +29,7 @@ contract NFT {
     };
     use dep::compressed_string::FieldCompressedString;
     use std::meta::derive;
+    // use router::utils::privately_check_timestamp;
 
     #[derive(Serialize)]
     #[event]
@@ -35,6 +37,24 @@ contract NFT {
         from: AztecAddress,
         to: AztecAddress,
         token_id: Field,
+    }
+
+    #[derive(Serialize)]
+    #[event]
+    struct ListingCreated {
+        seller: AztecAddress,
+        token_id: Field,
+        price: Field,
+        expiry: Field,
+    }
+
+    #[derive(Serialize)]
+    #[event]
+    struct ListingPurchased {
+        buyer: AztecAddress,
+        seller: AztecAddress,
+        token_id: Field,
+        price: Field,
     }
 
     #[storage]
@@ -45,6 +65,8 @@ contract NFT {
         private_nfts: Map<AztecAddress, PrivateSet<NFTNote, Context>, Context>,
         nft_exists: Map<Field, PublicMutable<bool, Context>, Context>,
         public_owners: Map<Field, PublicMutable<AztecAddress, Context>, Context>,
+        private_listings: Map<AztecAddress, PrivateSet<ListingNote, Context>, Context>,
+        listing_nonces: Map<Field, PublicMutable<Field, Context>, Context>,
     }
 
     #[public]
@@ -348,4 +370,67 @@ contract NFT {
         let page_limit_reached = notes.len() == options.limit;
         (owned_nft_ids, page_limit_reached)
     }
+
+    #[private]
+    fn create_listing(token_id: Field, price: Field) {
+        let price_int = price as u64;
+        assert(price_int > 0, "Price must be positive");
+        let seller = context.msg_sender();
+        
+        // Verify seller owns the NFT
+        let nft = storage.private_nfts;
+        let notes = nft.at(seller).pop_notes(
+            NoteGetterOptions::new()
+                .select(NFTNote::properties().token_id, Comparator.EQ, token_id)
+                .set_limit(1)
+        );
+        assert(notes.len() == 1, "Seller does not own this NFT");
+
+        // Create and store listing
+        // let nonce = storage.listing_nonces.at(token_id).read();
+        let private_nft = storage.private_listings;
+        let isSold = false;
+        let mut listing = ListingNote::new(token_id, price, seller, isSold);
+        private_nft.at(seller).insert(&mut listing)
+        .emit(
+            encode_and_encrypt_note(&mut context, seller, seller)
+        );
+        // storage.listing_nonces.at(token_id).write(nonce + 1);
+    }
+
+    #[private]
+    fn purchase_listing(seller: AztecAddress, token_id: Field, price: Field) {
+        let buyer = context.msg_sender();
+        // privately_check_timestamp(Comparator.LT, config.deadline, &mut context);
+
+        // Find and verify listing
+        let notes = storage.private_listings.at(seller).pop_notes(
+            NoteGetterOptions::new()
+                .select(ListingNote::properties().token_id, Comparator.EQ, token_id)
+                .set_limit(1)
+        );
+        assert(notes.len() == 1, "Listing not found");
+        let listing = notes.get_unchecked(0);
+        // Below assertion might be unnecessary due to pop_notes()
+        assert(!listing.isSold, "NFT is already sold");
+        let price_int = price as u64;
+        let listing_price_int = listing.price as u64;
+        assert(price_int >= listing_price_int, "Insufficient funds");
+
+        // Transfer NFT
+        let nft = NFT::at(context.this_address());
+        nft.transfer_in_private(seller, buyer, token_id, 0).call(&mut context);
+
+        NFT::at(context.this_address())
+        ._publish_ownership_changed(buyer, seller, token_id, listing.price)
+            .enqueue(&mut context);
+    }
+
+    #[public]
+    #[internal]
+        fn _publish_ownership_changed(buyer: AztecAddress, seller: AztecAddress, token_id: Field, price: Field) {
+            // To Do
+            // ListingPurchased { buyer, seller, token_id, price }.emit(encode_event(&mut context))
+    }
+
 }
