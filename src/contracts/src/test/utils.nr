@@ -131,3 +131,21 @@ pub unconstrained fn assert_owns_private_nft(
 
     assert(nft_found, "NFT not found in private nfts");
 }
+
+
+// basic setup function for trading tests
+pub unconstrained fn setup_for_trading() -> (&mut TestEnvironment, AztecAddress, AztecAddress, AztecAddress, Field) {
+    let (env, nft_contract_address, owner, buyer) = setup(false);
+    let token_id = 615;
+
+    // Mint private NFT to owner and verify
+    NFT::at(nft_contract_address)
+        .private_mint(owner, token_id)
+        .call(&mut env.private());
+
+    env.advance_block_by(1);
+    
+    assert_owns_private_nft(nft_contract_address, owner, token_id);
+
+    (env, nft_contract_address, owner, buyer, token_id)
+}
