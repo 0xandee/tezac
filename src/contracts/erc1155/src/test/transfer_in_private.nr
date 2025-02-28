@@ -6,7 +6,7 @@ use aztec::oracle::random::random;
 
 #[test]
 unconstrained fn transfer_in_private() {
-    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_and_private_mint(false);
+    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_mint_and_transfer_to_private(false);
 
     // Transfer the NFT to the recipient
     NFT::at(nft_contract_address).transfer_in_private(sender, recipient, token_id, 0).call(
@@ -19,7 +19,7 @@ unconstrained fn transfer_in_private() {
 
 #[test]
 unconstrained fn transfer_in_private_to_self() {
-    let (env, nft_contract_address, owner, _, token_id) = utils::setup_and_private_mint(false);
+    let (env, nft_contract_address, owner, _, token_id) = utils::setup_mint_and_transfer_to_private(false);
 
     // Transfer the NFT back to the owner
     NFT::at(nft_contract_address).transfer_in_private(owner, owner, token_id, 0).call(
@@ -32,8 +32,8 @@ unconstrained fn transfer_in_private_to_self() {
 
 #[test]
 unconstrained fn transfer_in_private_to_non_deployed_account() {
-    let (env, nft_contract_address, sender, _, token_id) = utils::setup_and_private_mint(false);
-    let not_deployed = cheatcodes::create_account();
+    let (env, nft_contract_address, sender, _, token_id) = utils::setup_mint_and_transfer_to_private(false);
+    let not_deployed = cheatcodes::create_account(999);
 
     // Transfer the NFT to the recipient
     NFT::at(nft_contract_address)
@@ -46,7 +46,7 @@ unconstrained fn transfer_in_private_to_non_deployed_account() {
 
 #[test]
 unconstrained fn transfer_in_private_on_behalf_of_other() {
-    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_and_private_mint(true);
+    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_mint_and_transfer_to_private(true);
 
     // Transfer the NFT to the recipient
     let transfer_in_private_call_interface =
@@ -68,7 +68,7 @@ unconstrained fn transfer_in_private_on_behalf_of_other() {
 
 #[test(should_fail_with = "NFT not found when transferring")]
 unconstrained fn transfer_in_private_failure_not_an_owner() {
-    let (env, nft_contract_address, owner, not_owner, token_id) = utils::setup_and_private_mint(false);
+    let (env, nft_contract_address, owner, not_owner, token_id) = utils::setup_mint_and_transfer_to_private(false);
     // Try transferring the NFT from not_owner
     env.impersonate(not_owner);
     NFT::at(nft_contract_address).transfer_in_private(not_owner, owner, token_id, 0).call(
