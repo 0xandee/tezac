@@ -49,7 +49,7 @@ unconstrained fn transfer_to_public_on_behalf_of_other() {
 
 #[test(should_fail_with = "NFT not found when transferring to public")]
 unconstrained fn transfer_to_public_failure_not_an_owner() {
-    let (env, nft_contract_address, _, not_owner, token_id) = utils::setup_and_private_mint(false);
+    let (env, nft_contract_address, _, not_owner, token_id) = utils::setup_mint_and_transfer_to_private(false);
 
     env.impersonate(not_owner);
     NFT::at(nft_contract_address).transfer_to_public(not_owner, not_owner, token_id, 0).call(
@@ -59,7 +59,7 @@ unconstrained fn transfer_to_public_failure_not_an_owner() {
 
 #[test(should_fail_with = "invalid nonce")]
 unconstrained fn transfer_to_public_failure_on_behalf_of_self_non_zero_nonce() {
-    let (env, nft_contract_address, user, _, token_id) = utils::setup_and_private_mint(false);
+    let (env, nft_contract_address, user, _, token_id) = utils::setup_mint_and_transfer_to_private(false);
 
     NFT::at(nft_contract_address).transfer_to_public(user, user, token_id, random()).call(
         &mut env.private(),
@@ -68,7 +68,7 @@ unconstrained fn transfer_to_public_failure_on_behalf_of_self_non_zero_nonce() {
 
 #[test(should_fail_with = "Authorization not found for message hash")]
 unconstrained fn transfer_to_public_failure_on_behalf_of_other_invalid_designated_caller() {
-    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_and_private_mint(true);
+    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_mint_and_transfer_to_private(true);
 
     let transfer_to_public_call_interface =
         NFT::at(nft_contract_address).transfer_to_public(sender, recipient, token_id, 0);
@@ -85,7 +85,7 @@ unconstrained fn transfer_to_public_failure_on_behalf_of_other_invalid_designate
 
 #[test(should_fail_with = "Authorization not found for message hash")]
 unconstrained fn transfer_to_public_failure_on_behalf_of_other_no_approval() {
-    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_and_private_mint(true);
+    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_mint_and_transfer_to_private(true);
 
     // Impersonate recipient
     env.impersonate(recipient);

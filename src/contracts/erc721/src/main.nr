@@ -72,21 +72,6 @@ contract NFT {
         storage.public_owners.at(token_id).write(to);
     }
 
-    #[private]
-    fn private_mint(to: AztecAddress, token_id: Field) {
-        assert(token_id != 0, "zero token ID not supported");
-
-        let nfts = storage.private_nfts;
-        let notes = nfts.at(to).pop_notes(NoteGetterOptions::new()
-            .select(NFTNote::properties().token_id, Comparator.EQ, token_id)
-            .set_limit(1));
-        assert(notes.len() == 0, "token already exists");
-
-        nfts.at(to).insert(&mut NFTNote::new(token_id, to)).emit(
-            encode_and_encrypt_note(&mut context, to, to)
-        );
-    }
-
     #[public]
     #[view]
     fn public_get_name() -> pub FieldCompressedString {
