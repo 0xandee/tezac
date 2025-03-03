@@ -4,7 +4,8 @@ mod test;
 use dep::aztec::macros::aztec;
 
 #[aztec]
-contract NFT {
+pub contract NFT {
+    use crate::types::listing_note::ListingNote;
     use crate::types::nft_note::NFTNote;
     use dep::authwit::auth::{
         assert_current_call_valid_authwit, assert_current_call_valid_authwit_public,
@@ -27,11 +28,12 @@ contract NFT {
         utils::comparison::Comparator,
     };
     use dep::compressed_string::FieldCompressedString;
+    use dep::token_contract::Token;
     use std::meta::derive;
 
     #[derive(Serialize)]
     #[event]
-    pub struct NFTTransfer {
+    struct NFTTransfer {
         from: AztecAddress,
         to: AztecAddress,
         token_id: Field,
@@ -42,18 +44,24 @@ contract NFT {
         symbol: PublicImmutable<FieldCompressedString, Context>,
         name: PublicImmutable<FieldCompressedString, Context>,
         admin: PublicMutable<AztecAddress, Context>,
+        minters: Map<AztecAddress, PublicMutable<bool, Context>, Context>,
         private_nfts: Map<AztecAddress, PrivateSet<NFTNote, Context>, Context>,
         nft_exists: Map<Field, PublicMutable<bool, Context>, Context>,
         public_owners: Map<Field, PublicMutable<AztecAddress, Context>, Context>,
+        token: PublicImmutable<AztecAddress, Context>,
+        private_listings: Map<AztecAddress, PrivateSet<ListingNote, Context>, Context>,
     }
 
     #[public]
     #[initializer]
-    fn constructor(admin: AztecAddress, name: str<31>, symbol: str<31>) {
+    fn constructor(admin: AztecAddress, name: str<31>, symbol: str<31>, token: AztecAddress) {
         assert(!admin.is_zero(), "invalid admin");
+        assert(!token.is_zero(), "invalid token");
         storage.admin.write(admin);
+        storage.minters.at(admin).write(true);
         storage.name.initialize(FieldCompressedString::from_string(name));
         storage.symbol.initialize(FieldCompressedString::from_string(symbol));
+        storage.token.initialize(token);
     }
 
     #[public]
@@ -63,28 +71,20 @@ contract NFT {
     }
 
     #[public]
+    fn set_minter(minter: AztecAddress, approve: bool) {
+        assert(storage.admin.read().eq(context.msg_sender()), "caller is not an admin");
+        storage.minters.at(minter).write(approve);
+    }
+
+    #[public]
     fn mint(to: AztecAddress, token_id: Field) {
         assert(token_id != 0, "zero token ID not supported");
+        assert(storage.minters.at(context.msg_sender()).read(), "caller is not a minter");
         assert(storage.nft_exists.at(token_id).read() == false, "token already exists");
 
         storage.nft_exists.at(token_id).write(true);
 
         storage.public_owners.at(token_id).write(to);
-    }
-
-    #[private]
-    fn private_mint(to: AztecAddress, token_id: Field) {
-        assert(token_id != 0, "zero token ID not supported");
-
-        let nfts = storage.private_nfts;
-        let notes = nfts.at(to).pop_notes(NoteGetterOptions::new()
-            .select(NFTNote::properties().token_id, Comparator.EQ, token_id)
-            .set_limit(1));
-        assert(notes.len() == 0, "token already exists");
-
-        nfts.at(to).insert(&mut NFTNote::new(token_id, to)).emit(
-            encode_and_encrypt_note(&mut context, to, to)
-        );
     }
 
     #[public]
@@ -115,6 +115,12 @@ contract NFT {
     #[view]
     fn get_admin() -> Field {
         storage.admin.read().to_field()
+    }
+
+    #[public]
+    #[view]
+    fn is_minter(minter: AztecAddress) -> bool {
+        storage.minters.at(minter).read()
     }
 
     #[public]
@@ -149,15 +155,13 @@ contract NFT {
 
     /// Prepares an increase of private balance of `to` (partial note). The increase needs to be finalized by calling
     /// `finalize_transfer_to_private. Returns a hiding point slot.
-    // docs:start:prepare_private_balance_increase
     #[private]
     fn prepare_private_balance_increase(to: AztecAddress) -> Field {
         _prepare_private_balance_increase(to, &mut context, storage)
     }
-    
+
     /// This function exists separately from `prepare_private_balance_increase` solely as an optimization as it allows
     /// us to have it inlined in the `transfer_to_private` function which results in one less kernel iteration.
-    ///
     #[contract_library_method]
     fn _prepare_private_balance_increase(
         to: AztecAddress,
@@ -184,7 +188,7 @@ contract NFT {
         // however is not the flow we are currently concerned with. To support the multi-transaction flow we could
         // introduce a `from` function argument, hash the x-coordinate with it and then repeat the hashing in
         // `finalize_transfer_to_private`.
-
+        //
         // We can also be sure that the `hiding_point_slot` will not overwrite any other value in the storage because
         // in our state variables we derive slots using a different hash function from multi scalar multiplication
         // (MSM).
@@ -263,10 +267,11 @@ contract NFT {
         finalization_payload.emit();
     }
 
-    //
-    // Cancel a private authentication witness.
-    // @param inner_hash The inner hash of the authwit to cancel.
-    //
+    /**
+     * Cancel a private authentication witness.
+     * @param inner_hash The inner hash of the authwit to cancel.
+     */
+    // docs:start:cancel_authwit
     #[private]
     fn cancel_authwit(inner_hash: Field) {
         let on_behalf_of = context.msg_sender();
@@ -281,7 +286,17 @@ contract NFT {
         } else {
             assert(nonce == 0, "invalid nonce");
         }
+        _transfer_in_private(from, to, token_id, &mut context, storage);
+    }
 
+    #[contract_library_method]
+    fn _transfer_in_private(
+        from: AztecAddress,
+        to: AztecAddress,
+        token_id: Field,
+        context: &mut PrivateContext,
+        storage: Storage<&mut PrivateContext>,
+    ) {
         let nfts = storage.private_nfts;
 
         let notes = nfts.at(from).pop_notes(NoteGetterOptions::new()
@@ -291,7 +306,19 @@ contract NFT {
 
         let mut new_note = NFTNote::new(token_id, to);
 
-        nfts.at(to).insert(&mut new_note).emit(encode_and_encrypt_note(&mut context, to, from));
+        nfts.at(to).insert(&mut new_note).emit(encode_and_encrypt_note(context, to, from));
+
+        // cancel listing if any
+        let seller_listing_notes = storage.private_listings.at(from).pop_notes(NoteGetterOptions::new()
+            .select(ListingNote::properties().token_id, Comparator.EQ, token_id)
+            .set_limit(1));
+        if seller_listing_notes.len() == 1 {
+            let seller_listing_note = seller_listing_notes.get_unchecked(0);
+            let buyer_listing_notes = storage.private_listings.at(seller_listing_note.buyer).pop_notes(NoteGetterOptions::new()
+                .select(ListingNote::properties().token_id, Comparator.EQ, token_id)
+                .set_limit(1));
+            assert(buyer_listing_notes.len() == 1, "Buyer listing not found when cancelling listing");
+        }
     }
 
     #[private]
@@ -320,7 +347,6 @@ contract NFT {
 
     #[public]
     #[view]
-    // Returns zero address when the token does not have a public owner. Reverts if the token does not exist.
     fn owner_of(token_id: Field) -> AztecAddress {
         assert(storage.nft_exists.at(token_id).read(), "token does not exist");
         storage.public_owners.at(token_id).read()
@@ -330,7 +356,7 @@ contract NFT {
     /// reached. Starts getting the notes from page with index `page_index`. Zero values in the array are placeholder
     /// values for non-existing notes.
     // docs:start:get_private_nfts
-    unconstrained fn get_private_nfts(
+    unconstrained pub fn get_private_nfts(
         owner: AztecAddress,
         page_index: u32,
     ) -> pub ([Field; MAX_NOTES_PER_PAGE], bool) {
@@ -347,5 +373,89 @@ contract NFT {
 
         let page_limit_reached = notes.len() == options.limit;
         (owned_nft_ids, page_limit_reached)
+    }
+
+    #[private]
+    fn list(token_id: Field, price: U128, buyer: AztecAddress) {
+        let from = context.msg_sender();
+
+        let nft_notes = storage.private_nfts.at(from).get_notes(NoteGetterOptions::new()
+            .select(NFTNote::properties().token_id, Comparator.EQ, token_id)
+            .set_limit(1));
+        assert(nft_notes.len() == 1, "NFT not found when listing");
+        assert(price > U128::zero(), "invalid price");
+        assert(!buyer.is_zero(), "invalid buyer");
+        assert(!buyer.eq(from), "buyer equals from");
+
+        let mut seller_note = ListingNote::new(token_id, from, from, buyer, price);
+        storage.private_listings.at(from).insert(&mut seller_note)
+            .emit(encode_and_encrypt_note(&mut context, from, from));
+
+        let mut buyer_note = ListingNote::new(token_id, buyer, from, buyer, price);
+        storage.private_listings.at(buyer).insert(&mut buyer_note)
+            .emit(encode_and_encrypt_note(&mut context, buyer, from));
+    }
+
+    #[private]
+    fn cancel_listing(token_id: Field) {
+        let from = context.msg_sender();
+
+        let seller_listing_notes = storage.private_listings.at(from).pop_notes(NoteGetterOptions::new()
+            .select(ListingNote::properties().token_id, Comparator.EQ, token_id)
+            .set_limit(1));
+        assert(seller_listing_notes.len() == 1, "Seller listing not found when cancelling listing");
+        
+        let seller_listing_note = seller_listing_notes.get_unchecked(0);
+
+        let buyer_listing_notes = storage.private_listings.at(seller_listing_note.buyer).pop_notes(NoteGetterOptions::new()
+            .select(ListingNote::properties().token_id, Comparator.EQ, token_id)
+            .set_limit(1));
+        assert(buyer_listing_notes.len() == 1, "Buyer listing not found when cancelling listing");
+    }
+
+    #[private]
+    fn purchase(token_id: Field, nonce: Field) {
+        let from = context.msg_sender();
+
+        let buyer_listing_notes = storage.private_listings.at(from).pop_notes(NoteGetterOptions::new()
+            .select(ListingNote::properties().token_id, Comparator.EQ, token_id)
+            .set_limit(1));
+        assert(buyer_listing_notes.len() == 1, "Buyer listing not found when purchasing");
+
+        let buyer_listing_note = buyer_listing_notes.get_unchecked(0);
+
+        let seller_listing_notes = storage.private_listings.at(buyer_listing_note.seller).pop_notes(NoteGetterOptions::new()
+            .select(ListingNote::properties().token_id, Comparator.EQ, token_id)
+            .set_limit(1));
+        assert(seller_listing_notes.len() == 1, "Seller listing not found when purchasing");
+
+        let token = Token::at(storage.token.read());
+        token.transfer_in_private(buyer_listing_note.buyer, buyer_listing_note.seller, buyer_listing_note.price, nonce).call(
+            &mut context,
+        );
+
+        _transfer_in_private(buyer_listing_note.seller, buyer_listing_note.buyer, token_id, &mut context, storage);
+    }
+
+    /// Returns an array of listings owned by `owner` in private and a flag indicating whether a page limit was
+    /// reached. Starts getting the notes from page with index `page_index`. Zero values in the array are placeholder
+    /// values for non-existing notes.
+    unconstrained pub fn get_private_listings(
+        owner: AztecAddress,
+        page_index: u32,
+    ) -> pub ([ListingNote; MAX_NOTES_PER_PAGE], bool) {
+        let offset = page_index * MAX_NOTES_PER_PAGE;
+        let mut options = NoteViewerOptions::new();
+        let notes = storage.private_listings.at(owner).view_notes(options.set_offset(offset));
+
+        let mut owned_listings = [ListingNote::default(); MAX_NOTES_PER_PAGE];
+        for i in 0..options.limit {
+            if i < notes.len() {
+                owned_listings[i] = notes.get_unchecked(i);
+            }
+        }
+
+        let page_limit_reached = notes.len() == options.limit;
+        (owned_listings, page_limit_reached)
     }
 }

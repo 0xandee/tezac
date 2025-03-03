@@ -1,6 +1,6 @@
 use dep::aztec::{
     keys::getters::{get_nsk_app, get_public_keys},
-    macros::notes::partial_note,
+    macros::notes::note,
     note::utils::compute_note_hash_for_nullify,
     oracle::random::random,
     prelude::{NoteHeader, NullifiableNote, PrivateContext},
@@ -10,20 +10,24 @@ use dep::aztec::{
     },
 };
 
-// docs:start:nft_note
-#[partial_note(quote { token_id })]
-pub struct NFTNote {
+#[note]
+#[derive(Eq)]
+pub struct ListingNote {
     // ID of the token
     token_id: Field,
     // The owner of the note
     owner: AztecAddress,
+    // The initiating seller
+    seller: AztecAddress,
+    // The intended buyer
+    buyer: AztecAddress,
+    // The purchase price of the listing
+    price: U128,
     // Randomness of the note to hide its contents
     randomness: Field,
 }
-// docs:end:nft_note
 
-impl NullifiableNote for NFTNote {
-    // docs:start:compute_nullifier
+impl NullifiableNote for ListingNote {
     fn compute_nullifier(
         self,
         context: &mut PrivateContext,
@@ -36,7 +40,6 @@ impl NullifiableNote for NFTNote {
             GENERATOR_INDEX__NOTE_NULLIFIER as Field,
         )
     }
-    // docs:end:compute_nullifier
 
     unconstrained fn compute_nullifier_without_context(self, storage_slot: Field) -> Field {
         let note_hash_for_nullify = compute_note_hash_for_nullify(self, storage_slot);
@@ -49,21 +52,24 @@ impl NullifiableNote for NFTNote {
     }
 }
 
-impl NFTNote {
-    pub fn new(token_id: Field, owner: AztecAddress) -> Self {
+impl ListingNote {
+    pub fn new(token_id: Field, owner: AztecAddress, seller: AztecAddress, buyer: AztecAddress, price: U128) -> Self {
         /// Safety: We use the randomness to preserve the privacy of the note recipient by preventing brute-forcing,
         /// so a malicious sender could use non-random values to make the note less private. But they already know
         /// the full note pre-image anyway, and so the recipient already trusts them to not disclose this
         /// information. We can therefore assume that the sender will cooperate in the random value generation.
         let randomness = unsafe { random() };
-        NFTNote { token_id, owner, randomness, header: NoteHeader::empty() }
+        ListingNote { token_id, owner, seller, buyer, price, randomness, header: NoteHeader::empty() }
     }
-}
-
-impl Eq for NFTNote {
-    fn eq(self, other: Self) -> bool {
-        (self.token_id == other.token_id)
-            & (self.owner == other.owner)
-            & (self.randomness == other.randomness)
+    pub fn default() -> Self {
+        ListingNote {
+            token_id: 0,
+            owner: AztecAddress::zero(),
+            seller: AztecAddress::zero(),
+            buyer: AztecAddress::zero(),
+            price: U128::zero(),
+            randomness: 0,
+            header: NoteHeader::empty()
+        }
     }
 }

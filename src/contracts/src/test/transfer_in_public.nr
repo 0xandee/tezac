@@ -5,7 +5,9 @@ use dep::aztec::oracle::random::random;
 
 #[test]
 unconstrained fn transfer_in_public() {
-    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_and_mint(false);
+    // Setup without account contracts. We are not using authwits here, so dummy accounts are enough
+    let (env, _, nft_contract_address, sender, recipient, token_id) =
+        utils::setup_and_mint(/* with_account_contracts */ false);
 
     // Transfer the NFT
     NFT::at(nft_contract_address).transfer_in_public(sender, recipient, token_id, 0).call(
@@ -19,7 +21,9 @@ unconstrained fn transfer_in_public() {
 
 #[test]
 unconstrained fn transfer_in_public_to_self() {
-    let (env, nft_contract_address, user, _, token_id) = utils::setup_and_mint(false);
+    // Setup without account contracts. We are not using authwits here, so dummy accounts are enough
+    let (env, _, nft_contract_address, user, _, token_id) =
+        utils::setup_and_mint(/* with_account_contracts */ false);
 
     // Transfer the NFT
     NFT::at(nft_contract_address).transfer_in_public(user, user, token_id, 0).call(&mut env.public());
@@ -32,7 +36,9 @@ unconstrained fn transfer_in_public_to_self() {
 
 #[test]
 unconstrained fn transfer_in_public_on_behalf_of_other() {
-    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_and_mint(true);
+    // Setup with account contracts. Slower since we actually deploy them, but needed for authwits.
+    let (env, _, nft_contract_address, sender, recipient, token_id) =
+        utils::setup_and_mint(/* with_account_contracts */ true);
 
     let transfer_in_public_from_call_interface =
         NFT::at(nft_contract_address).transfer_in_public(sender, recipient, token_id, 1);
@@ -52,7 +58,11 @@ unconstrained fn transfer_in_public_on_behalf_of_other() {
 
 #[test(should_fail_with = "invalid nonce")]
 unconstrained fn transfer_in_public_failure_on_behalf_of_self_non_zero_nonce() {
-    let (env, nft_contract_address, sender, recipient) = utils::setup(false);
+    // Setup without account contracts. We are not using authwits here, so dummy accounts are enough.
+    // The authwit check is in the beginning so we don't need to waste time on minting the NFT and transferring
+    // it to private..
+    let (env, _, nft_contract_address, sender, recipient) =
+        utils::setup(/* with_account_contracts */ false);
 
     // We set random value for the token_id as the nonce check is before we use the value.
     let token_id = random();
@@ -65,7 +75,9 @@ unconstrained fn transfer_in_public_failure_on_behalf_of_self_non_zero_nonce() {
 
 #[test(should_fail_with = "invalid owner")]
 unconstrained fn transfer_in_public_non_existent_nft() {
-    let (env, nft_contract_address, sender, recipient) = utils::setup(false);
+    // Setup without account contracts. We are not using authwits here, so dummy accounts are enough
+    let (env, _, nft_contract_address, sender, recipient) =
+        utils::setup(/* with_account_contracts */ false);
 
     // Try to transfer the NFT
     let token_id = 612;
@@ -76,7 +88,9 @@ unconstrained fn transfer_in_public_non_existent_nft() {
 
 #[test(should_fail_with = "unauthorized")]
 unconstrained fn transfer_in_public_failure_on_behalf_of_other_without_approval() {
-    let (env, nft_contract_address, sender, recipient, token_id) = utils::setup_and_mint(true);
+    // Setup with account contracts. Slower since we actually deploy them, but needed for authwits.
+    let (env, _, nft_contract_address, sender, recipient, token_id) =
+        utils::setup_and_mint(/* with_account_contracts */ true);
 
     // Impersonate recipient to perform the call
     env.impersonate(recipient);
@@ -89,7 +103,7 @@ unconstrained fn transfer_in_public_failure_on_behalf_of_other_without_approval(
 #[test(should_fail_with = "unauthorized")]
 unconstrained fn transfer_in_public_failure_on_behalf_of_other_wrong_caller() {
     // Setup with account contracts. Slower since we actually deploy them, but needed for authwits.
-    let (env, nft_contract_address, sender, recipient, token_id) =
+    let (env, _, nft_contract_address, sender, recipient, token_id) =
         utils::setup_and_mint(/* with_account_contracts */ true);
     let transfer_in_public_from_call_interface =
         NFT::at(nft_contract_address).transfer_in_public(sender, recipient, token_id, 1);
