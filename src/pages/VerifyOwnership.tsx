@@ -1,15 +1,9 @@
 'use client';
 
-import React, { useState } from 'react';
-
-// Mock ownership data
-const mockOwnershipData = {
-    'NFT-001': { owner: '0x1234...abcd', timestamp: '2023-08-15T14:23:45Z' },
-    'NFT-002': { owner: '0x2345...bcde', timestamp: '2023-09-22T09:12:36Z' },
-    'NFT-003': { owner: '0x3456...cdef', timestamp: '2023-10-05T16:48:21Z' },
-    'NFT-123': { owner: '0x7890...hijk', timestamp: '2023-11-12T11:34:59Z' },
-    'NFT-456': { owner: '0x8901...ijkl', timestamp: '2023-12-03T08:27:14Z' },
-};
+import React, { useCallback, useState } from 'react';
+import { useContract } from '../hooks/useContract';
+import { toast } from 'react-toastify';
+import { AztecAddress } from '@aztec/aztec.js';
 
 interface OwnershipData {
     owner: string;
@@ -21,19 +15,26 @@ const VerifyOwnership: React.FC = () => {
     const [isLoading, setIsLoading] = useState(false);
     const [result, setResult] = useState<OwnershipData | null>(null);
     const [notFound, setNotFound] = useState(false);
+    const [listingPrice, setListingPrice] = useState('');
+    const [listingResult, setListingResult] = useState<string | null>(null);
+    const { contract, deploy, wait } = useContract();
 
-    const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const handleChange = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         setTokenId(e.target.value);
-        // Reset results when input changes
         setResult(null);
         setNotFound(false);
-    };
+    }, []);
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = useCallback(async (e: React.FormEvent) => {
         e.preventDefault();
 
         if (!tokenId) {
             alert('Please enter a token ID');
+            return;
+        }
+
+        if (!contract) {
+            alert('Contract not deployed');
             return;
         }
 
@@ -42,26 +43,63 @@ const VerifyOwnership: React.FC = () => {
         setNotFound(false);
 
         try {
-            // Simulate API delay
-            await new Promise(resolve => setTimeout(resolve, 1500));
-
-            // Check mock data
-            const ownershipData = mockOwnershipData[tokenId as keyof typeof mockOwnershipData];
-
-            if (ownershipData) {
-                setResult(ownershipData);
+            const ownerOfInteraction = contract.methods.owner_of(tokenId);
+            const owner = await ownerOfInteraction.simulate();
+            
+            if (owner) {
+                setResult({
+                    owner: owner.toString(),
+                    timestamp: new Date().toISOString()
+                });
             } else {
                 setNotFound(true);
             }
         } catch (error) {
             console.error('Error verifying ownership:', error);
-            alert('Failed to verify ownership. Please try again.');
+            setNotFound(true);
         } finally {
             setIsLoading(false);
         }
-    };
+    }, [tokenId, contract]);
 
-    // Format timestamp for display
+    const handleListNFT = useCallback(async (e: React.FormEvent) => {
+        e.preventDefault();
+
+        if (!tokenId || !listingPrice) {
+            alert('Please enter a token ID and listing price');
+            return;
+        }
+
+        if (!contract) {
+            alert('Contract not deployed');
+            return;
+        }
+
+        setIsLoading(true);
+        setListingResult(null);
+
+        try {
+            const zeroAddress = AztecAddress.ZERO;
+            const price = BigInt(listingPrice) * BigInt(1e18); // Convert to wei
+            
+            const listInteraction = contract.methods.list(
+                tokenId,
+                price,
+                zeroAddress
+            );
+            
+            const tx = await listInteraction.send().wait();
+            
+            setListingResult(`NFT ${tokenId} listed for ${listingPrice} ETH (Tx: ${tx.txHash})`);
+            toast.success('NFT listed successfully');
+        } catch (error) {
+            console.error('Error listing NFT:', error);
+            toast.error('Failed to list NFT');
+        } finally {
+            setIsLoading(false);
+        }
+    }, [tokenId, listingPrice, contract]);
+
     const formatDate = (timestamp: string) => {
         const date = new Date(timestamp);
         return date.toLocaleString();
@@ -80,59 +118,114 @@ const VerifyOwnership: React.FC = () => {
                 </div>
             </div>
 
-            <form onSubmit={handleSubmit}>
-                <div className="form-group">
-                    <label htmlFor="tokenId" className="form-label">Token ID</label>
-                    <input
-                        type="text"
-                        id="tokenId"
-                        value={tokenId}
-                        onChange={handleChange}
-                        placeholder="Enter token ID (e.g., NFT-123)"
-                        className="form-input"
-                        required
-                    />
-                </div>
+            {!contract && (
+                <form onSubmit={deploy}>
+                    <button type="submit" disabled={wait} className="button-primary button-full">
+                        {wait ? 'Deploying...' : 'Deploy NFT Contract'}
+                    </button>
+                </form>
+            )}
 
-                <button type="submit" disabled={isLoading} className="button-primary button-full">
-                    {isLoading ? 'Verifying...' : 'Verify Ownership'}
-                </button>
-            </form>
+            {contract && (
+                <>
+                    <form onSubmit={handleSubmit}>
+                        <div className="form-group">
+                            <label htmlFor="tokenId" className="form-label">Token ID</label>
+                            <input
+                                type="text"
+                                id="tokenId"
+                                value={tokenId}
+                                onChange={handleChange}
+                                placeholder="Enter token ID (e.g., 123)"
+                                className="form-input"
+                                required
+                            />
+                        </div>
 
-            {/* Results section */}
-            {(result || notFound) && (
-                <div className={`alert ${notFound ? 'alert-error' : 'alert-success'}`}>
-                    <h3 style={{
-                        margin: '0 0 15px 0',
-                        color: notFound ? 'var(--error-color)' : 'var(--accent-primary)'
-                    }}>
-                        Verification Result
-                    </h3>
+                        <button type="submit" disabled={isLoading} className="button-primary button-full">
+                            {isLoading ? 'Verifying...' : 'Verify Ownership'}
+                        </button>
+                    </form>
 
-                    {notFound ? (
-                        <p style={{ margin: '0', color: 'var(--error-color)' }}>
-                            No ownership data found for token ID: {tokenId}
-                        </p>
-                    ) : result && (
-                        <div>
-                            <div style={{ marginBottom: '10px' }}>
-                                <span style={{ color: 'var(--text-secondary)' }}>Token ID: </span>
-                                <span style={{ color: 'var(--text-active)' }}>{tokenId}</span>
-                            </div>
-                            <div style={{ marginBottom: '10px' }}>
-                                <span style={{ color: 'var(--text-secondary)' }}>Owner: </span>
-                                <span style={{ color: 'var(--text-active)' }}>{result.owner}</span>
-                            </div>
-                            <div>
-                                <span style={{ color: 'var(--text-secondary)' }}>Ownership since: </span>
-                                <span style={{ color: 'var(--text-active)' }}>{formatDate(result.timestamp)}</span>
-                            </div>
+                    {(result || notFound) && (
+                        <div className={`alert ${notFound ? 'alert-error' : 'alert-success'}`}>
+                            <h3 style={{
+                                margin: '0 0 15px 0',
+                                color: notFound ? 'var(--error-color)' : 'var(--accent-primary)'
+                            }}>
+                                Verification Result
+                            </h3>
+
+                            {notFound ? (
+                                <p style={{ margin: '0', color: 'var(--error-color)' }}>
+                                    No ownership data found for token ID: {tokenId}
+                                </p>
+                            ) : result && (
+                                <div>
+                                    <div style={{ marginBottom: '10px' }}>
+                                        <span style={{ color: 'var(--text-secondary)' }}>Token ID: </span>
+                                        <span style={{ color: 'var(--text-active)' }}>{tokenId}</span>
+                                    </div>
+                                    <div style={{ marginBottom: '10px' }}>
+                                        <span style={{ color: 'var(--text-secondary)' }}>Owner: </span>
+                                        <span style={{ color: 'var(--text-active)' }}>{result.owner}</span>
+                                    </div>
+                                    <div>
+                                        <span style={{ color: 'var(--text-secondary)' }}>Ownership since: </span>
+                                        <span style={{ color: 'var(--text-active)' }}>{formatDate(result.timestamp)}</span>
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     )}
-                </div>
+
+                    <div className="page-header">
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '10px', marginBottom: '10px', width: '100%' }}>
+                            <h2 className="form-title">
+                                List NFT
+                            </h2>
+                            <p style={{ margin: 0 }}>
+                                List an NFT for sale (public listing).
+                            </p>
+                        </div>
+                    </div>
+
+                    <form onSubmit={handleListNFT}>
+                        <div className="form-group">
+                            <label htmlFor="listingPrice" className="form-label">Listing Price (ETH)</label>
+                            <input
+                                type="number"
+                                id="listingPrice"
+                                value={listingPrice}
+                                onChange={(e) => setListingPrice(e.target.value)}
+                                placeholder="Enter listing price in ETH"
+                                className="form-input"
+                                step="0.01"
+                                min="0"
+                                required
+                            />
+                        </div>
+
+                        <button type="submit" disabled={isLoading} className="button-primary button-full">
+                            {isLoading ? 'Listing...' : 'List NFT'}
+                        </button>
+                    </form>
+
+                    {listingResult && (
+                        <div className="alert alert-success">
+                            <h3 style={{
+                                margin: '0 0 15px 0',
+                                color: 'var(--accent-primary)'
+                            }}>
+                                Listing Result
+                            </h3>
+                            <p style={{ margin: '0', color: 'var(--text-active)' }}>{listingResult}</p>
+                        </div>
+                    )}
+                </>
             )}
         </div>
     );
 };
 
-export default VerifyOwnership; 
+export default VerifyOwnership;
